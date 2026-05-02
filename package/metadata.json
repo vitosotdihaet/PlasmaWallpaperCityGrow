@@ -1,19 +1,19 @@
 {
-    "KPackageStructure": "Plasma/Wallpaper",
-    "KPlugin": {
-        "Authors": [
-            {
-                "Email": "flemke2go@gmail.com",
-                "Name": "Felix Lemke"
-            }
-        ],
-        "Description": "City Grow simulator as screen locker",
-        "Icon": "plasma",
-        "Id": "org.kde.plasma.citygrow_debug",
-        "License": "LGPLv2+",
-        "Name": "Simple City Grow - Debug",
-        "Version": "1.0",
-        "Website": "https://plasma.kde.org/"
-    },
-    "X-KDE-ParentApp": "org.kde.plasmashell"
+  "KPackageStructure": "Plasma/Wallpaper",
+  "KPlugin": {
+    "Authors": [
+      {
+        "Email": "flemke2go@gmail.com",
+        "Name": "Felix Lemke"
+      }
+    ],
+    "Description": "City Grow simulator as screen locker",
+    "Icon": "plasma",
+    "Id": "org.vitosotdihaet.citygrow_deb",
+    "License": "LGPLv2+",
+    "Name": "Sperm",
+    "Version": "1.0",
+    "Website": "https://plasma.kde.org/"
+  },
+  "X-KDE-ParentApp": "org.kde.plasmashell"
 }
