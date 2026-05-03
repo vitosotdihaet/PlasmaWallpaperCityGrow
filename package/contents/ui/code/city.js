@@ -23,47 +23,49 @@
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-var cell_count_x = 0;
-var cell_count_y = 0;
-// var SIZE = wallpaper.configuration.scale; // default = 3
-var SIZE = 3; // default = 3
+var SCALE = 3; // from KDE
+var START_BRANCHES = 0; // from config
+var SHOW_REVERSE_ANIMATION = true; // from config
+var FILL_CITY = true; // from config
 
-var lifeTime = 8000; //> config
-var lifeTime_branch = 15; //> config
-var prob_city2land = 12.0; //> config
-var prob_land2city = 0.003;
-var prob_branchOff = 15; //> config
-var prob_branchOff_land = 6; //> config
-var prob_branchOff_tomain = 1;
-var branch_fallOff = 50;
-var change_hue_newMain = 9;
-// var start_branches = wallpaper.configuration.start_branches; // 3
-var start_branches = 0;
-// var start_branches = 3; // 3
-var showReverse = true; //wallpaper.configuration.show_reverse; // true
-var fillCity = true; //wallpaper.configuration.fill_city; // true
+var WIDTH = 0; // from KDE
+var HEIGHT = 0; // from KDE
 
-var max_steps_back = 300; //> config
+var COLUMN_COUNT = 0; // from KDE
+var ROW_COUNT = 0; // from KDE
 
-var lightness_default = 140;
-var lightness_branch = 60;
+const default_lifetime = 8000;
+const default_lifetime_branch = 15;
+const prob_city2land = 12.0;
+const prob_land2city = 0.003;
+const prob_branch_off_city = 15;
+const prob_branch_off_land = 6;
+const prob_branch_off_to_main = 1;
 
-var saturation_default = 255;
+const branch_falloff = 50;
+
+const max_steps_back = 100;
+
+const hue_delta = 9;
+const lightness_default = 140;
+const lightness_branch = 60;
+const saturation_default = 255;
 
 function prok(probability) {
   return Math.random() < probability / 100.0;
 }
+function randomScaleRound(to) {
+  return Math.round(Math.random() * to);
+}
 
-var width = 100;
-var height = 100;
-var firstDraw = true;
-var config_save = null;
-var size_save = null;
-var reverseRunning = false;
+var previous_config = null;
+var previous_size = null;
+var reverse_running = false;
 
 var cells = [];
-var branchList = [];
-var allBranches = [];
+var active_branches = [];
+var all_branches = [];
+var history = [];
 
 class StackEntry {
   constructor(type, par1, par2, par3, par4) {
@@ -74,24 +76,23 @@ class StackEntry {
     this.par4 = par4;
   }
 }
-var history = [];
 
 class Pos {
   constructor(x, y) {
-    this.x = x;
-    this.y = y;
+    this.x = (x + COLUMN_COUNT) % COLUMN_COUNT;
+    this.y = (y + ROW_COUNT) % ROW_COUNT;
   }
 
   toIdx(off_x = 0, off_y = 0) {
     return (
-      ((this.y + off_y) * cell_count_x + (this.x + off_x)) %
-      (cell_count_x * height)
+      ((this.y + off_y + ROW_COUNT) % ROW_COUNT) * COLUMN_COUNT +
+      ((this.x + off_x + COLUMN_COUNT) % COLUMN_COUNT)
     );
   }
 
   static fromIdx(idx) {
-    let y = Math.floor(idx / cell_count_x);
-    let x = idx - y * cell_count_x;
+    let y = Math.floor(idx / COLUMN_COUNT);
+    let x = idx - y * COLUMN_COUNT;
     return new Pos(x, y);
   }
 }
@@ -99,13 +100,13 @@ class Pos {
 class Branch {
   constructor(pos) {
     this.pos = pos;
-    this.state = "RUNNING";
+    this.active = true;
     this.mode = "CITY";
     this.expandDirection = new Pos(0, 0);
-    this.ownFields = [pos];
+    this.ownCells = [pos];
     this.age = 0;
-    this.lifeTime = lifeTime;
-    this.hue = 200;
+    this.lifeTime = default_lifetime;
+    this.hue = Math.round(Math.random() * 360);
     this.saturation = saturation_default;
     this.lightness = lightness_default;
     this.history = [];
@@ -129,112 +130,147 @@ class Branch {
     );
   }
 
-  createLine(toPos, context, fromPos = null) {
-    if (!fromPos) {
-      fromPos = this.pos;
+  createLine(to, context, from = null) {
+    if (!from) {
+      from = this.pos;
     }
+
     let width = 2;
     let offset = width / 2.0; // this is to move the line away from the screen corner (due to the linewidth)
     if (this.mode === "LAND") {
       width = 2;
     }
+
     let margin = width / 2.0; // this is to avoid overlap of filled squares with lines
-    if (fillCity && this.mode === "CITY") {
-      if (this.ownFields.length >= 1) {
-        // what happens here:
-        // 1) take the line from the lastPosition to the newPositon
-        let lastPosition = this.ownFields[this.ownFields.length - 1];
-        // 2) calculate the perpendicular direction (with length 1)
-        let perpendicular = new Pos(
-          toPos.y - lastPosition.y,
-          toPos.x - lastPosition.x,
-        );
-        // 3) add the perpendicular vector the lastPosition > there is an imaginary square
-        let imaginaryPoint = new Pos(
-          lastPosition.x + perpendicular.x,
-          lastPosition.y + perpendicular.y,
-        );
-        // 4) find the top left corner (always the point with minimal x and y)
-        let leftTop = new Pos(
-          Math.min(toPos.x, imaginaryPoint.x),
-          Math.min(toPos.y, imaginaryPoint.y),
-        );
-        // 5) draw a filled rect with topLeft Point and width/height = 1 (but scaled with grid Size and additional margin to not overlap with lines)
-        context.fillStyle = this.getSecondaryColor();
-        context.globalCompositeOperation = "overlay";
-        context.fillRect(
-          2 * SIZE * leftTop.x + margin + offset,
-          2 * SIZE * leftTop.y + margin + offset,
-          2 * SIZE - 2 * margin,
-          2 * SIZE - 2 * margin,
-        );
-        this.history.push(
-          new StackEntry(
-            "RECT",
-            2 * SIZE * leftTop.x + margin + offset,
-            2 * SIZE * leftTop.y + margin + offset,
-            2 * SIZE - 2 * margin,
-            2 * SIZE - 2 * margin,
-          ),
-        );
-        // 6) repeat step 2, but mirrored at the line (so basically -x and -y of the first perpendicular vector)
-        perpendicular = new Pos(
-          -toPos.y + lastPosition.y,
-          -toPos.x + lastPosition.x,
-        );
-        // 7) get new imaginary rect (on the other side of the line), find topLeft corner, draw rect
-        imaginaryPoint = new Pos(
-          lastPosition.x + perpendicular.x,
-          lastPosition.y + perpendicular.y,
-        );
-        leftTop = new Pos(
-          Math.min(toPos.x, imaginaryPoint.x),
-          Math.min(toPos.y, imaginaryPoint.y),
-        );
-        context.fillRect(
-          2 * SIZE * leftTop.x + margin + offset,
-          2 * SIZE * leftTop.y + margin + offset,
-          2 * SIZE - 2 * margin,
-          2 * SIZE - 2 * margin,
-        );
-        this.history.push(
-          new StackEntry(
-            "RECT",
-            2 * SIZE * leftTop.x + margin + offset,
-            2 * SIZE * leftTop.y + margin + offset,
-            2 * SIZE - 2 * margin,
-            2 * SIZE - 2 * margin,
-          ),
-        );
-      }
+
+    if (FILL_CITY && this.mode === "CITY" && this.ownCells.length >= 1) {
+      // 1) take the line from the lastPosition to the newPositon
+      let previous_pos = this.ownCells[this.ownCells.length - 1];
+
+      // 2) calculate the perpendicular direction (with length 1)
+      let perpendicular_vector = new Pos(
+        to.y - previous_pos.y,
+        to.x - previous_pos.x,
+      );
+
+      // 3) add the perpendicular vector to the previous position to create an imaginary square
+      let imaginary = new Pos(
+        previous_pos.x + perpendicular_vector.x,
+        previous_pos.y + perpendicular_vector.y,
+      );
+
+      // 4) find the top left corner of the square
+      let top_left = new Pos(
+        Math.min(to.x, imaginary.x),
+        Math.min(to.y, imaginary.y),
+      );
+
+      // 5) draw a filled rect with topLeft Point and width/height = 1 (but scaled with grid Size and additional margin to not overlap with lines)
+      context.fillStyle = this.getSecondaryColor();
+      context.globalCompositeOperation = "overlay";
+      context.fillRect(
+        2 * SCALE * top_left.x + margin + offset,
+        2 * SCALE * top_left.y + margin + offset,
+        2 * SCALE - 2 * margin,
+        2 * SCALE - 2 * margin,
+      );
+
+      this.history.push(
+        new StackEntry(
+          "RECT",
+          2 * SCALE * top_left.x + margin + offset,
+          2 * SCALE * top_left.y + margin + offset,
+          2 * SCALE - 2 * margin,
+          2 * SCALE - 2 * margin,
+        ),
+      );
+
+      // 6) repeat step 2, but mirrored at the line (so basically -x and -y of the first perpendicular vector)
+      perpendicular_vector = new Pos(
+        -to.y + previous_pos.y,
+        -to.x + previous_pos.x,
+      );
+
+      // 7) get new imaginary rect (on the other side of the line), find topLeft corner, draw rect
+      imaginary = new Pos(
+        previous_pos.x + perpendicular_vector.x,
+        previous_pos.y + perpendicular_vector.y,
+      );
+
+      top_left = new Pos(
+        Math.min(to.x, imaginary.x),
+        Math.min(to.y, imaginary.y),
+      );
+
+      context.fillRect(
+        2 * SCALE * top_left.x + margin + offset,
+        2 * SCALE * top_left.y + margin + offset,
+        2 * SCALE - 2 * margin,
+        2 * SCALE - 2 * margin,
+      );
+
+      this.history.push(
+        new StackEntry(
+          "RECT",
+          2 * SCALE * top_left.x + margin + offset,
+          2 * SCALE * top_left.y + margin + offset,
+          2 * SCALE - 2 * margin,
+          2 * SCALE - 2 * margin,
+        ),
+      );
     }
 
     context.globalCompositeOperation = "source-over";
     context.lineWidth = width;
     context.strokeStyle = this.getColor();
+
+    let diff_x = to.x - from.x;
+    let diff_y = to.y - from.y;
+
+    if (diff_x > 1) {
+      // going <- with wraparound
+      this.drawLineAndSave(context, to.x + 1, from.y, to.x, to.y, offset);
+      from.x = to.x;
+    } else if (diff_x < -1) {
+      // going -> with wraparound
+      this.drawLineAndSave(context, from.x, from.y, from.x + 1, to.y, offset);
+      from.x = to.x;
+    } else if (diff_y > 1) {
+      // going ^ with wraparound
+      this.drawLineAndSave(context, from.x, to.y + 1, to.x, to.y, offset);
+      from.y = to.y;
+    } else if (diff_y < -1) {
+      // going v with wraparound
+      this.drawLineAndSave(context, from.x, from.y, to.x, from.y + 1, offset);
+      from.y = to.y;
+    }
+
+    this.drawLineAndSave(context, from.x, from.y, to.x, to.y, offset);
+
+    this.pos = to;
+    this.ownCells.push(to);
+  }
+
+  drawLineAndSave(context, from_x, from_y, to_x, to_y, offset) {
     context.beginPath();
-    context.moveTo(
-      2 * SIZE * fromPos.x + offset,
-      2 * SIZE * fromPos.y + offset,
-    );
-    context.lineTo(2 * SIZE * toPos.x + offset, 2 * SIZE * toPos.y + offset);
+    context.moveTo(2 * SCALE * from_x + offset, 2 * SCALE * from_y + offset);
+    context.lineTo(2 * SCALE * to_x + offset, 2 * SCALE * to_y + offset);
+    context.stroke();
+
     this.history.push(
       new StackEntry(
         "LINE",
-        2 * SIZE * fromPos.x + offset,
-        2 * SIZE * fromPos.y + offset,
-        2 * SIZE * toPos.x + offset,
-        2 * SIZE * toPos.y + offset,
+        2 * SCALE * from_x + offset,
+        2 * SCALE * from_y + offset,
+        2 * SCALE * to_x + offset,
+        2 * SCALE * to_y + offset,
       ),
     );
-    context.stroke();
-    this.pos = toPos;
-    this.ownFields.push(toPos);
   }
 
   static reverseLine(context, stackEntry) {
     let width = 2;
-    let offset = width / 2.0;
+
     context.globalCompositeOperation = "source-over";
     if (stackEntry.type === "RECT") {
       context.fillStyle = "#000";
@@ -246,6 +282,7 @@ class Branch {
         stackEntry.par4,
       );
     }
+
     if (stackEntry.type === "LINE") {
       context.lineWidth = width;
       context.strokeStyle = "#000";
@@ -258,12 +295,12 @@ class Branch {
 
   moveToNewPos() {
     for (
-      let i = this.ownFields.length - 1;
-      i >= Math.max(0, this.ownFields.length - max_steps_back);
+      let i = this.ownCells.length - 1;
+      i >= Math.max(0, this.ownCells.length - max_steps_back);
       i--
     ) {
-      let testPos = this.ownFields[i];
-      if (this.getFreeFields(testPos).length > 0) {
+      let testPos = this.ownCells[i];
+      if (this.getFreeCells(testPos).length > 0) {
         this.pos = testPos;
         return true;
       }
@@ -272,232 +309,263 @@ class Branch {
     return false;
   }
 
-  getFreeFields(pos = null) {
+  getFreeCells(pos = null) {
     if (!pos) {
       pos = this.pos;
     }
-    let freeFields = [];
-    if (cells[pos.toIdx(1, 0)] === 0) {
-      freeFields.push(new Pos(pos.x + 1, pos.y));
+
+    let free_cells = [];
+    if (cells[pos.toIdx(1, 0)] === false) {
+      free_cells.push(new Pos(pos.x + 1, pos.y));
     }
-    if (cells[pos.toIdx(-1, 0)] === 0) {
-      freeFields.push(new Pos(pos.x - 1, pos.y));
+    if (cells[pos.toIdx(-1, 0)] === false) {
+      free_cells.push(new Pos(pos.x - 1, pos.y));
     }
-    if (cells[pos.toIdx(0, 1)] === 0) {
-      freeFields.push(new Pos(pos.x, pos.y + 1));
+    if (cells[pos.toIdx(0, 1)] === false) {
+      free_cells.push(new Pos(pos.x, pos.y + 1));
     }
-    if (cells[pos.toIdx(0, -1)] === 0) {
-      freeFields.push(new Pos(pos.x, pos.y - 1));
+    if (cells[pos.toIdx(0, -1)] === false) {
+      free_cells.push(new Pos(pos.x, pos.y - 1));
     }
-    return freeFields;
+
+    return free_cells;
   }
 
   findNextMove() {
-    if (this.state !== "RUNNING") {
+    if (!this.active) {
       return null;
     }
 
-    let freeFields = this.getFreeFields();
-    if (freeFields.length === 0) {
+    let free_cells = this.getFreeCells();
+    if (free_cells.length === 0) {
       if (this.moveToNewPos()) {
         return this.findNextMove();
       }
-      this.state = "STOPPED";
+      this.active = false;
       return null;
     }
 
-    if (this.lifeTime - this.age < lifeTime_branch) {
+    if (this.lifeTime - this.age < default_lifetime_branch) {
       this.mode = "CITY";
-    } else {
-      if (this.mode === "LAND") {
-        let expandField = new Pos(
-          this.pos.x + this.expandDirection.x,
-          this.pos.y + this.expandDirection.y,
-        );
-        if (
-          freeFields.find((field) => {
-            return field.x === expandField.x && field.y === expandField.y;
-          })
-        ) {
-          for (let i = 0; i < 10; i++) {
-            freeFields.push(expandField);
-          }
-        } else {
-          this.mode = "CITY";
-          this.age = Math.round(Math.random() * this.age);
+    } else if (this.mode === "LAND") {
+      let expand_to_position = new Pos(
+        this.pos.x + this.expandDirection.x,
+        this.pos.y + this.expandDirection.y,
+      );
+
+      if (
+        free_cells.find((cell) => {
+          return (
+            cell.x === expand_to_position.x && cell.y === expand_to_position.y
+          );
+        })
+      ) {
+        // if there is a free cell at the expand position, make it more likely to be chosen
+        for (let i = 0; i < 10; i++) {
+          free_cells.push(expand_to_position);
         }
+      } else {
+        this.mode = "CITY";
+        this.age = randomScaleRound(this.age);
       }
     }
-    return freeFields[Math.round(Math.random() * (freeFields.length - 1))];
+
+    return randomChoice(free_cells);
   }
+
   setExpandDirection() {
-    let freeFields = this.getFreeFields();
-    if (freeFields.length === 0) {
+    let freecells = this.getFreeCells();
+    if (freecells.length === 0) {
       return;
     }
-    let targetPos = randomChoice(freeFields);
+
+    let targetPos = randomChoice(freecells);
+
     this.expandDirection = new Pos(
       targetPos.x - this.pos.x,
       targetPos.y - this.pos.y,
     );
   }
+
   drawMove(context) {
     if (this.age >= this.lifeTime) {
-      this.state = "STOPPED";
+      this.active = false;
       return null;
     }
+
     if (this.mode === "CITY" && prok(prob_city2land)) {
       this.mode = "LAND";
       this.setExpandDirection();
     } else if (this.mode === "LAND" && prok(prob_land2city)) {
       this.mode = "CITY";
-      this.age = Math.round(Math.random() * this.age);
+      this.age = randomScaleRound(this.age);
     }
-    let newPos = this.findNextMove();
-    if (!newPos) {
+
+    let new_position = this.findNextMove();
+    if (!new_position) {
       return null;
     }
-    this.createLine(newPos, context);
+
+    this.createLine(new_position, context);
     this.age++;
-    cells[newPos.toIdx()] = 1;
+    cells[new_position.toIdx()] = true;
   }
+
   setMain() {
-    this.saturation = 255;
+    this.saturation = saturation_default;
     this.lightness = lightness_default;
-    this.hue += change_hue_newMain;
+    this.hue += hue_delta;
+
     if (this.hue > 255) {
       this.hue -= 255;
     }
-    this.lifeTime = lifeTime;
+
+    this.lifeTime = default_lifetime;
   }
+
   branchOff(context) {
-    if (this.ownFields.length <= 1) {
+    // do not branch off for first 10 steps
+    if (this.ownCells.length <= 10) {
       return null;
     }
-    let searchPos = this.ownFields[this.ownFields.length - 1];
-    let freeFields = this.getFreeFields(searchPos);
-    if (freeFields.length === 0) {
+
+    let previous_position = this.ownCells[this.ownCells.length - 1];
+
+    let free_cells = this.getFreeCells(previous_position);
+    if (free_cells.length === 0) {
       return null;
     }
-    let newPos = randomChoice(freeFields);
-    this.createLine(newPos, context, searchPos);
-    let newBranch = new Branch(this.pos);
-    newBranch.hue = this.hue;
-    newBranch.lightness = lightness_branch;
-    newBranch.lifeTime = lifeTime_branch;
-    cells[newPos.toIdx()] = 1;
-    return newBranch;
+
+    let new_position = randomChoice(free_cells);
+    this.createLine(new_position, context, previous_position);
+
+    let branch = new Branch(this.pos);
+    branch.hue = this.hue;
+    branch.lightness = lightness_branch;
+    branch.lifeTime = default_lifetime_branch;
+    cells[new_position.toIdx()] = true;
+
+    return branch;
   }
 }
 
 function randomChoice(fromList) {
-  return fromList[Math.round(Math.random() * (fromList.length - 1))];
+  return fromList[randomScaleRound(fromList.length - 1)];
 }
 
 function randomPos() {
-  return Pos.fromIdx(Math.round(Math.random() * cells.length));
+  return Pos.fromIdx(randomScaleRound(cells.length));
 }
 
 function initialize(config) {
-  start_branches = config.start_branches;
-  SIZE = config.scale;
-  showReverse = config.show_reverse;
-  fillCity = config.fill_city;
+  SCALE = config.scale;
+  START_BRANCHES = config.start_branches;
+  SHOW_REVERSE_ANIMATION = config.show_reverse;
+  FILL_CITY = config.fill_city;
 
-  cell_count_x = Math.floor(width / config.scale / 2);
-  cell_count_y = Math.floor(height / config.scale / 2);
+  COLUMN_COUNT = Math.floor(WIDTH / config.scale / 2);
+  ROW_COUNT = Math.floor(HEIGHT / config.scale / 2);
 
-  allBranches = [];
-  reverseRunning = false;
-  firstDraw = true;
-  for (let y = 0; y < cell_count_y; y++) {
-    for (let x = 0; x < cell_count_x; x++) {
-      let idx = y * cell_count_x + x;
-      cells[idx] = 0;
+  all_branches = [];
+  reverse_running = false;
+  for (let y = 0; y < ROW_COUNT; y++) {
+    for (let x = 0; x < COLUMN_COUNT; x++) {
+      let idx = y * COLUMN_COUNT + x;
+      cells[idx] = false;
     }
   }
-  branchList = [];
-  for (let i = 0; i < start_branches; i++) {
-    branchList.push(new Branch(randomPos()));
-  }
-  allBranches = branchList;
-  console.log("Initialize the City");
-}
 
-function dimensionChanged(width, height) {
-  cell_count_x = Math.round(width / SIZE / 2);
-  cell_count_y = Math.round(height / SIZE / 2);
-  initialize();
+  active_branches = [];
+  for (let i = 0; i < START_BRANCHES; i++) {
+    active_branches.push(new Branch(randomPos()));
+  }
+  all_branches = active_branches;
+
+  console.log("Initialize the City Grow Wallpaper");
 }
 
 function paintMatrix(ctx, size, config) {
-  if (config != config_save || size != size_save) {
-    width = size.width;
-    height = size.height;
+  if (config != previous_config || size != previous_size) {
+    WIDTH = size.width;
+    HEIGHT = size.height;
     restart(ctx, config);
-    config_save = config;
-    size_save = size;
+    previous_config = config;
+    previous_size = size;
   }
 
-  if (reverseRunning === true) {
-    if (showReverse === false) {
-      return false;
-    }
-    allBranches = allBranches.filter((branch) => {
+  if (reverse_running === true && SHOW_REVERSE_ANIMATION === false) {
+    return false;
+  }
+
+  if (reverse_running === true) {
+    all_branches = all_branches.filter((branch) => {
       if (branch.history.length === 0) {
         return false;
       }
-      // const reversePoints = branch.mode === "CITY" ? 200/allBranches.length : 1;
-      const reversePoints = Math.ceil(50 / allBranches.length);
-      for (let i = 0; i < Math.min(branch.history.length, reversePoints); i++) {
-        let lastAction = branch.history.pop();
-        Branch.reverseLine(ctx, lastAction);
+
+      const reverse_points = Math.ceil(50 / all_branches.length);
+      for (
+        let i = 0;
+        i < Math.min(branch.history.length, reverse_points);
+        i++
+      ) {
+        let last_action = branch.history.pop();
+        Branch.reverseLine(ctx, last_action);
       }
+
       return true;
     });
-    if (allBranches.length === 0) {
+
+    if (all_branches.length === 0) {
       return false;
     }
 
     return true;
   }
 
-  branchList.forEach((oldBranch) => {
-    let scaled_branchOff =
-      (prob_branchOff * (1.0 + branch_fallOff)) /
-      (branch_fallOff + branchList.length);
-    let scaled_branchOff_land =
-      (prob_branchOff_land * (1.0 + branch_fallOff)) /
-      (branch_fallOff + branchList.length);
+  active_branches.forEach((branch) => {
+    let prob_scaled_branch_off_city =
+      (prob_branch_off_city * (1.0 + branch_falloff)) /
+      (branch_falloff + active_branches.length);
+    let prob_scaled_branch_off_land =
+      (prob_branch_off_land * (1.0 + branch_falloff)) /
+      (branch_falloff + active_branches.length);
+
     if (
-      (oldBranch.mode === "CITY" && prok(scaled_branchOff)) ||
-      (oldBranch.mode === "LAND" && prok(scaled_branchOff_land))
+      (branch.mode === "CITY" && prok(prob_scaled_branch_off_city)) ||
+      (branch.mode === "LAND" && prok(prob_scaled_branch_off_land))
     ) {
-      let newBranch = oldBranch.branchOff(ctx);
-      if (newBranch) {
-        if (prok(prob_branchOff_tomain)) {
-          newBranch.setMain();
+      let new_branch = branch.branchOff(ctx);
+
+      if (new_branch) {
+        if (prok(prob_branch_off_to_main)) {
+          new_branch.setMain();
         }
-        branchList.push(newBranch);
-        allBranches.push(newBranch);
+
+        active_branches.push(new_branch);
+        all_branches.push(new_branch);
       }
     }
   });
-  branchList = branchList.filter((branch) => {
+
+  active_branches = active_branches.filter((branch) => {
     branch.drawMove(ctx);
-    return branch.state === "RUNNING";
+    return branch.active;
   });
-  if (branchList.length === 0) {
-    reverseRunning = true;
+
+  if (active_branches.length === 0) {
+    reverse_running = true;
     return true;
   }
+
   return true;
 }
 
 function restart(ctx, config) {
   ctx.reset();
-  allBranches = [];
-  reverseRunning = false;
-  firstDraw = true;
+
+  all_branches = [];
+  reverse_running = false;
+
   initialize(config);
 }
