@@ -37,6 +37,21 @@ import "code/city.js" as City
 WallpaperItem {
     id: wallpaper
 
+    property bool isDark: Qt.styleHints.colorScheme === Qt.Dark
+
+    Component.onCompleted: {
+        City.BG_COLOR = isDark ? "black" : "white";
+    }
+
+    Connections {
+        target: Qt.styleHints
+        function onColorSchemeChanged() {
+            City.BG_COLOR = (Qt.styleHints.colorScheme === Qt.Dark) ? "black" : "white";
+            // force a repaint so the new color is used immediately
+            root.requestPaint();
+        }
+    }
+
     Canvas {
         id: root
         anchors.fill: parent
@@ -61,7 +76,6 @@ WallpaperItem {
         }
 
         onPaint: {
-            // if(!root.running) {stepTimer.stop();}
             var ctx = getContext("2d");
             var bRunning = City.paintMatrix(ctx, screenSize, wallpaper.configuration);
             if (!bRunning) {

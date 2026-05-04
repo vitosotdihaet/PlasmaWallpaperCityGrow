@@ -48,7 +48,7 @@ const max_steps_back = 100;
 
 const hue_delta = 9;
 const lightness_default = 140;
-const lightness_branch = 60;
+var lightness_branch = 60;
 const saturation_default = 255;
 
 function prok(probability) {
@@ -76,6 +76,10 @@ class StackEntry {
     this.par4 = par4;
   }
 }
+
+var BG_COLOR_DARK = "#000";
+var BG_COLOR_LIGHT = "#FFF";
+var BG_COLOR = BG_COLOR_LIGHT;
 
 class Pos {
   constructor(x, y) {
@@ -273,7 +277,7 @@ class Branch {
 
     context.globalCompositeOperation = "source-over";
     if (stackEntry.type === "RECT") {
-      context.fillStyle = "#000";
+      context.fillStyle = BG_COLOR;
       context.strokeStyle = null;
       context.fillRect(
         stackEntry.par1,
@@ -285,7 +289,7 @@ class Branch {
 
     if (stackEntry.type === "LINE") {
       context.lineWidth = width;
-      context.strokeStyle = "#000";
+      context.strokeStyle = BG_COLOR;
       context.beginPath();
       context.moveTo(stackEntry.par1, stackEntry.par2);
       context.lineTo(stackEntry.par3, stackEntry.par4);
@@ -457,7 +461,7 @@ function randomPos() {
   return Pos.fromIdx(randomScaleRound(cells.length));
 }
 
-function initialize(config) {
+function initialize(ctx, config) {
   SCALE = config.scale;
   START_BRANCHES = config.start_branches;
   SHOW_REVERSE_ANIMATION = config.show_reverse;
@@ -468,6 +472,12 @@ function initialize(config) {
 
   all_branches = [];
   reverse_running = false;
+
+  ctx.fillStyle = BG_COLOR;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  var lightness_branch = BG_COLOR === BG_COLOR_DARK ? 60 : 180;
+
   for (let y = 0; y < ROW_COUNT; y++) {
     for (let x = 0; x < COLUMN_COUNT; x++) {
       let idx = y * COLUMN_COUNT + x;
@@ -567,5 +577,5 @@ function restart(ctx, config) {
   all_branches = [];
   reverse_running = false;
 
-  initialize(config);
+  initialize(ctx, config);
 }
