@@ -419,10 +419,7 @@ class Branch {
     this.saturation = saturation_default;
     this.lightness = lightness_default;
     this.hue += hue_delta;
-
-    if (this.hue > 255) {
-      this.hue -= 255;
-    }
+    this.hue %= 360;
 
     this.lifeTime = default_lifetime;
   }
